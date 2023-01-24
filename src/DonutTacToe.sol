@@ -4,33 +4,88 @@ pragma solidity >=0.8.0 <0.9.0;
 // @title: DonutTacToe
 // @author: menuObj 
 // @notice: Play tic tac toe against the contract on a donut (formally known as a torus), player 1 is O (user) and player 2 is X (contract)
-// @date: 6/11/2022 17:09
 contract DonutTacToe {
    /* the 72 rightmost bits represent the 36 pieces
       with each piece represented by 2 bits
       (00 = empty, 01 = user marker aka O, 10 = contract marker aka X) */
     uint256 torusState;
  
+    // @notice Recursive function implementing minimax algorithm with alpha beta pruning with max depth 2
+    // @param possibleTorus is the current state of the torus ("possible" because it contains hypothetical moves)
+    // @param depth is how deep we currently are in the game tree
+    // @param alpha and beta used for alpha beta pruning
+    // @return at depth 0 returns the index of the cell to place marker at, at depth 1 returns the value of the best game possible, at depth 2 returns the value of the game     
+    function searchForMove(uint256 possibleTorus, uint256 depth, int alpha, int beta) private pure returns (int) {  
+        if(depth == 2) {    
+            return evaluateTorus(possibleTorus);
+        }
+        if(depth == 1){   // user's turn
+            int minPoints = type(int).max;
+            for(uint256 posIndex; posIndex < 36; ++posIndex) {
+                if( possibleTorus & (3 << posIndex*2) == 0 ){   // piece at index posIndex is empty
+                    int points = searchForMove(possibleTorus | (1 << posIndex*2), depth + 1, alpha, beta);
+                    if(points < minPoints){
+                        minPoints = points;
+                    } 
+                    if(minPoints < beta){
+                        beta = minPoints;
+                    }
+                    if(beta <= alpha){
+                        break;
+                    }
+                }
+            }
+            return minPoints;
+        }
+        else {    //contract's turn
+            uint256 emptyPosCount;
+            uint256 emptyPosIndex;
+            uint256 optimalMovePos;   // only used if depth is 0
+            int maxPoints = type(int).min;
+            for(uint256 posIndex; posIndex < 36; ++posIndex) {
+                if( possibleTorus & (3 << posIndex*2) == 0 ){
+                    emptyPosCount++;
+                    emptyPosIndex = posIndex;
+                    int points = searchForMove(possibleTorus | (1 << (posIndex*2+1)), depth + 1, alpha, beta);
+                    if(points > maxPoints){
+                        maxPoints = points;
+					    /*if depth is 0 we don't want to return the max points attainable but
+                          rather the position that gets us that max point: */
+					    if(depth == 0){
+				            optimalMovePos = posIndex;
+					    }
+                    }
+                    if(maxPoints > alpha){
+                        alpha = maxPoints;
+                    }
+                    if(beta <= alpha){
+                        break;
+                    }
+                }
+            }
+            if(emptyPosCount == 1 && depth == 0 && evaluateTorus( possibleTorus | (1 << (emptyPosIndex*2+1)) ) != type(int).max ){   //donut is now full as contract has made the last available move, we return 40 or 41 as only 0~35 are returned for depth 0
+            	return int(emptyPosIndex+72);    //game ends as tie
+            }
+            if(depth == 0){
+                return int(optimalMovePos);
+            }
+            return maxPoints;
+        }
+    }
+	
 	
     // @notice Evaluates a given game state by scanning in groups of 6 (horizontal, vertical, both diagonals)
     // @dev the bitshifts are to check if there are 5, 4, or 3 markers in a line because if there are those should be considered first when evaluating
     // @param possibleTorus is the current state of the torus ("possible" because it contains hypothetical moves)
     // @return Returns the point value of the current donut
-    struct GroupData{
-        uint8 group;
-        uint8 oCount;
-        uint8 xCount; 
-    }
-    function findBestMove(uint256 possibleTorus) private pure returns (uint256){
+    function evaluateTorus(uint256 possibleTorus) private pure returns (int){
+        uint256 torusData;     //contains data for horizontal, vertical, rd, ld from right to left and within each goes from 0th group to 5th group from right to left
+        int totalPoints;
+ 
         unchecked{
-            uint256 torusData;   //contains data for horizontal, vertical, rd, ld from right to left and within each goes from 0th group to 5th group from right to left
             /* the ith cell is a part of the (i/6)th horizontal group, (i%6)th vertical group, ((i+(i/6)) % 6)th rd group, and ((i-(i/6)) % 6)th ld group */
-            uint256 emptyPieceCount;
             for(uint256 i; i < 36; ++i){
                 if(possibleTorus & (3 << 2*i) == 0){        //no markers
-                    if(emptyPieceCount < 2){
-                        emptyPieceCount++;   //if there is only one empty cell, that means that is the only move the contract can make before the game finishes
-                    }
                     continue;
                 }
                 else if( (possibleTorus >> 2*i) & 1 == 1){    //user marker
@@ -54,97 +109,41 @@ contract DonutTacToe {
                     torusData = ( torusData & ( ( 7 << ( 111 + 6 * ((i - i/6) % 6) ) )  ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ) ) + ( (leftDownCount + 1) << ( 111 + 6 * ((i - i/6) % 6) ) );
                 }
             }
-            if(emptyPieceCount == 1){
-                return 36;
-            }
-            uint256 bestMove;
-            uint256 maxValue;
-            for(uint256 i; i < 36; ++i){
-                if(possibleTorus & (3 << 2*i) == 0){      //empty so candidate
-                    uint256 totalValue;
-                    GroupData memory groupData = GroupData(uint8( (torusData >> (6 * (i/6)) ) & 63 ), 0, 0);    //horizontal group
-                    groupData.oCount = (groupData.group & 7) + 1;
-                    groupData.xCount = groupData.group >> 3;
-                    if((groupData.oCount == 0 && groupData.xCount == 3) || (groupData.oCount <= 1 && groupData.xCount == 4)){
-                        bestMove = i;
-                        break;     //make this move to win immediately, no need to look for other moves
-                    }
-                    if((oCount == 3 && xCount == 0) || (oCount == 4 && xCount <= 1)){ 
-                        bestMove = i;
-                        continue;    //contract will make this move to not lose next turn unless it can win this turn
-                    }
-                    totalValue += calculateValue(groupData.oCount, groupData.xCount);
-                    groupData.group = uint8( (torusData >> (36 + 6 * (i%6)) ) & 63 );   //vertical group
-                    groupData.oCount = (groupData.group & 7) + 1;
-                    groupData.xCount = groupData.group >> 3;
-                    if((groupData.oCount == 0 && groupData.xCount == 3) || (groupData.oCount <= 1 && groupData.xCount == 4)){
-                        bestMove = i;
-                        break;     //make this move to win immediately, no need to look for other moves
-                    }
-                    if((oCount == 3 && xCount == 0) || (oCount == 4 && xCount <= 1)){ 
-                        bestMove = i;
-                        continue;    //contract will make this move to not lose next turn unless it can win this turn
-                    }
-                    totalValue += calculateValue(groupData.oCount, groupData.xCount);
-                    groupData.group = uint8( (torusData >> (72 + 6 * ((i + i/6) % 6) ) ) & 63 );    //rightdown group
-                    groupData.oCount = (groupData.group & 7) + 1;
-                    groupData.xCount = groupData.group >> 3;
-                    if((groupData.oCount == 0 && groupData.xCount == 3) || (groupData.oCount <= 1 && groupData.xCount == 4)){
-                        bestMove = i;
-                        break;     //make this move to win immediately, no need to look for other moves
-                    }
-                    if((oCount == 3 && xCount == 0) || (oCount == 4 && xCount <= 1)){ 
-                        bestMove = i;
-                        continue;    //contract will make this move to not lose next turn unless it can win this turn
-                    }
-                    totalValue += calculateValue(groupData.oCount, groupData.xCount);
-                    groupData.group = uint8( (torusData >> (108 + 6 * ( (i - i/6) % 6) ) & 63 ) );    //leftdown group
-                    groupData.oCount = (groupData.group & 7) + 1;
-                    groupData.xCount = groupData.group >> 3;
-                    if((groupData.oCount == 0 && groupData.xCount == 3) || (groupData.oCount <= 1 && groupData.xCount == 4)){
-                        bestMove = i;
-                        break;     //make this move to win immediately, no need to look for other moves
-                    }
-                    if((oCount == 3 && xCount == 0) || (oCount == 4 && xCount <= 1)){ 
-                        bestMove = i;
-                        continue;    //contract will make this move to not lose next turn unless it can win this turn
-                    }
-                    totalValue += calculateValue(groupData.oCount, groupData.xCount);
-                    //final judgement if this wasn't contract's immediate winning move:
-                    if(totalValue > maxValue){
-                        bestMove = i;
-                    }
+            //need to loop through entire torus before returning anything UNLESS we have 5 X in a line (the order of precedence is XCount == 5 then OCount == 5 then XCount == 4 then OCount == 4 because evaluateTorus is only run at depth 2 which means user made the latest move
+            bool fiveOCount = false;     
+            bool fourXCount = false;
+            bool fourOCount = false;
+            for(uint256 i; i < 24; ++i){
+                uint256 currGroup = (torusData >> (6 * i)) & 63;
+                uint256 OCount = currGroup & 7;
+                uint256 XCount = currGroup >> 3;
+                if(OCount == 5){
+                    fiveOCount = true;
                 }
+                if(XCount == 5){
+                    return type(int).max;
+                }
+                if(OCount == 4 && XCount == 0){
+                    fourOCount = true;
+                }
+                if(XCount == 4 && OCount == 0){
+                    fourXCount = true;
+                }
+                totalPoints += int(XCount - OCount);
             }
-            return bestMove;
+            if(fiveOCount == true){
+                return type(int).min;
+            }
+            if(fourXCount == true){
+                return type(int).max;
+            }
+            if(fourOCount == true){
+                return type(int).min;
+            }
+            return totalPoints;
         }
     }
-
-
-    function calculateValue(uint256 oCount, uint256 xCount) internal pure returns (uint256) {
-        if(oCount == 1 && xCount == 0){     //defensive move
-            return 50;
-        }
-        if(oCount == 2 && xCount <= 1){     //defensive move
-            return 75;
-        }
-        if(oCount == 3 && xCount == 1){       //defensive move
-            return 100;
-        }
-        if(oCount == 0 && xCount == 1){     //offensive move
-            return 1;
-        }
-        if(oCount <= 1 && xCount == 2){     //offensive move
-            return 4;
-        }
-        if(oCount == 1 && xCount == 3){    //offensive move
-            return 100;
-        }
-        if(oCount == 1 && xCount == 1){    //neutral move
-            return 1;
-        }
-    }
-	
+    
 	
     // @notice Checks if contract or user (depending on isContract) has won. Examines possibleTorus around the index of the most recent move because that is all that matters.
     // @dev This function enforces the logic of the torus board so we don't need a separate contract for the board logic (engine and board logic is combined).
@@ -275,22 +274,21 @@ contract DonutTacToe {
         if(checkWin(torusStateCopy, userPieceIndex, false) == true) {
             //game ends, display "User wins" on frontend
 			resetTorus();
-            return 1;
+            return userPieceIndex;
         }
-        uint256 contractPieceIndex = uint256( findBestMove(torusStateCopy) );
-        if(contractPieceIndex == 36){   //36 is not a valid move, so use it to signify a tie
-			//game is tied with contract last move
+        uint256 contractPieceIndex = uint256( searchForMove(torusStateCopy, 0, type(int).min, type(int).max) );
+        if(contractPieceIndex >= 72 && contractPieceIndex <= 107){
+			//game is tied with contract last move at cell #(contractPieceIndex-72)
 			resetTorus();
-            return 3;  
+            return contractPieceIndex;  
         }
         updateState(userPieceIndex, contractPieceIndex);
-        torusStateCopy = torusState;
-        if(checkWin(torusStateCopy, contractPieceIndex, false) == true) {
+        if(checkWin(torusState, contractPieceIndex, false) == true) {
             //game ends, display "Contract wins" on frontend
 			resetTorus();
-            return 2;
+            return (contractPieceIndex+36);
         }
-        return 0;
+        return 108;
     }
 
 

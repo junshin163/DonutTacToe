@@ -2,7 +2,7 @@
 pragma solidity >=0.8.0 <0.9.0;
 
 // @title: DonutTacToe
-// @author: menuObj 
+// @author: menuobj 
 // @notice: Play tic tac toe against the contract on a donut (formally known as a torus), player 1 is O (user) and player 2 is X (contract)
 contract DonutTacToe {
    /* the 72 rightmost bits represent the 36 pieces
